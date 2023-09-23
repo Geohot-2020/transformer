@@ -148,3 +148,47 @@ class MultiHeadAttention(nn.Module):
 
         return self.linear_out(x)
 
+
+class PositionalEncoding(nn.Module):
+    """
+    位置编码
+    """
+    def __init__(self, dim, dropout, max_len=5000):
+        """
+        :param dim: 词向量维度，必须偶数位
+        :param dropout:
+        :param max_len: 解码器生成句子的最长长度
+        """
+        if dim % 2 != 0:
+            raise ValueError("Cannot use sin/cos positional encoding with "
+                             "odd dim (got dim={:d})".format(dim))
+        """
+        构建位置编码pe
+        PE(pos, 2i/2i+1) = sin/cos(pos/10000^{2i/d_{model}})
+        """
+        pe = torch.zeros(max_len, dim)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp((torch.arange(0, dim, 2, dtype=torch.float) *
+                              -(math.log(10000.0) / dim)))
+
+        pe[:, 0::2] = torch.sin(position.float() * div_term)
+        pe[:, 1::2] = torch.cos(position.float() * div_term)
+        pe = pe.unsqueeze(1)
+        super(PositionalEncoding, self).__init__()
+        self.register_buffer('pe', pe)
+        self.drop_out = nn.Dropout(p=dropout)
+        self.dim = dim
+
+    def forward(self, emb, step=None):
+        """
+        :param emb: [seq_len, bat]
+        :param step: 选择第几个词, None为一整句话
+        :return:
+        """
+        emb = emb * math.sqrt(self.dim)
+        if step is None:
+            emb = emb + self.pe[:emb.size(0)]
+        else:
+            emb = emb + self.pe[step]
+        emb = self.drop_out(emb)
+        return emb
