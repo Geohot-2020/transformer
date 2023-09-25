@@ -16,20 +16,29 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import namedtuple
-from torch.autograd import Variable
-
-Hypothesis = namedtuple('Hypothesis', ['value', 'score'])
 
 
 def clones(module, n):
     return nn.ModuleList([copy.deepcopy(module) for _ in range(n)])
 
 
+class TextEmbedding(nn.Module):
+    """
+    词向量嵌入
+    """
+    def __init__(self, vocab_size, d_model):
+        super(TextEmbedding, self).__init__()
+        self.d_model = d_model
+        self.embed = nn.Embedding(vocab_size, d_model)
+
+    def forward(self, x):
+        return self.embed(x) * math.sqrt(self.d_model)
+
+
 class LayerNorm(nn.Module):
     """
     实现标准化公式
     """
-
     def __init__(self, feature, eps=1e-6):
         """
         :param feature: self-attention的大小
@@ -50,7 +59,6 @@ class SubLayerConnection(nn.Module):
     """
     残差 + layer_norm
     """
-
     def __init__(self, size, dropout=0.1):
         super(SubLayerConnection, self).__init__()
         # layer_norm
@@ -97,12 +105,11 @@ class MultiHeadAttention(nn.Module):
     """
     多头注意力机制
     """
-
     def __init__(self, head, d_model, dropout=0.1):
         """
         :param head: 头数， 默认为8
-        :param d_model: 输入维度
-        :param dropout:
+        :param d_model: 词向量维度
+        :param dropout: 避免过拟合
         """
         super(MultiHeadAttention, self).__init__()
         # 平均分头
@@ -128,7 +135,7 @@ class MultiHeadAttention(nn.Module):
         :param query: Q
         :param key: K
         :param value: V
-        :param mask:
+        :param mask: 掩码
         :return:
         """
         if mask is not None:
@@ -154,7 +161,6 @@ class PositionalEncoding(nn.Module):
     """
     位置编码
     """
-
     def __init__(self, dim, dropout, max_len=5000):
         """
         :param dim: 词向量维度，必须偶数位
@@ -201,7 +207,6 @@ class PositionWiseFeedForward(nn.Module):
     前馈神经网络FFN
     w2(relu(w1(layer_norm(x))+b1)+b2
     """
-
     def __init__(self, d_model, d_ff, dropout=0.1):
         super(PositionWiseFeedForward, self).__init__()
         self.w_1 = nn.Linear(d_model, d_ff)
@@ -221,7 +226,6 @@ class Generator(nn.Module):
     """
     Linear + softmax
     """
-
     def __init__(self, d_model, vocab_size):
         super(Generator, self).__init__()
         self.linear = nn.Linear(d_model, vocab_size)
@@ -242,6 +246,14 @@ def subsequent_mask(size):
 
 
 def pad_mask(src, r2l_trg, trg, pad_idx):
+    """
+    创建掩码
+    :param src: 序列
+    :param r2l_trg: 从右到左解码器的掩码
+    :param trg: 从左到右解码器的掩码
+    :param pad_idx: 填充标记索引
+    :return:
+    """
     if isinstance(src, tuple):
         if len(src) == 4:
             src_image_mask = (src[0][:, :, 0] != pad_idx).unsqueeze(1)
@@ -287,9 +299,8 @@ def pad_mask(src, r2l_trg, trg, pad_idx):
 
 class EncoderLayer(nn.Module):
     """
-    一层编码器
+    单层编码器
     """
-
     def __init__(self, size, attn, feed_forward, dropout=0.1):
         """
         :param size: 维度
@@ -312,7 +323,6 @@ class Encoder(nn.Module):
     """
     多层拼接
     """
-
     def __init__(self, n, encoder_layer):
         """
         :param n: 层数
@@ -332,7 +342,6 @@ class DecoderLayer(nn.Module):
     单层解码器
     双向解码器
     """
-
     def __init__(self, size, attn, feed_forward, sublayer_num, dropout=0.1):
         super(DecoderLayer, self).__init__()
         self.attn = attn
@@ -351,9 +360,8 @@ class DecoderLayer(nn.Module):
 
 class R2L_Decoder(nn.Module):
     """
-    正向解码器
+    从右到左解码器
     """
-
     def __init__(self, n, decoder_layer):
         super(R2L_Decoder, self).__init__()
         self.decoder_layer = clones(decoder_layer, n)
@@ -366,9 +374,8 @@ class R2L_Decoder(nn.Module):
 
 class L2R_Decoder(nn.Module):
     """
-    反向解码器
+    从左到右解码器
     """
-
     def __init__(self, n, decoder_layer):
         super(L2R_Decoder, self).__init__()
         self.decoder_layer = clones(decoder_layer, n)
@@ -383,5 +390,83 @@ class L2R_Decoder(nn.Module):
 =================上面不重要==============================
 =================下面调包才重要===========================
 """
-# class ABDTransformer(nn.Module):
-#     def __init__(self, ):
+
+
+class ABDTransformer(nn.Module):
+    """
+    单模态transformer
+    """
+    def __init__(self, vocab, d_model, d_ff, n_heads, n_layers, dropout, device='cuda'):
+        """
+        :param vocab: 词库
+        :param d_model: 模型维度
+        :param d_ff: 前馈神经网络维度
+        :param n_heads: 多头注意力的头数
+        :param n_layers: 编码器和解码器层的数量
+        :param dropout: 减少过拟合
+        :param device: 训练（gpu）
+        """
+        super(ABDTransformer, self).__init__()
+        self.vocab = vocab
+        self.device = device
+
+        # 简写copy
+        c = copy.deepcopy
+
+        # 多头注意力模块
+        attn = MultiHeadAttention(n_heads, d_model, dropout)
+
+        # 前馈神经网络
+        feed_forward = PositionWiseFeedForward(d_model, d_ff)
+
+        # 文本词嵌入， 位置编码
+        self.trg_embed = TextEmbedding(vocab.n_vocabs, d_model)
+        self.pos_embed = PositionalEncoding(d_model, dropout)
+
+        # 编码器
+        self.encoder = Encoder(n_layers, EncoderLayer(d_model, c(attn), c(feed_forward), dropout))
+
+        # 双向解码器
+        self.r2ldecoder = R2L_Decoder(n_layers, DecoderLayer(d_model, c(attn), c(feed_forward),
+                                                             sublayer_num=3, dropout=dropout))
+        self.l2rdecoder = L2R_Decoder(n_layers, DecoderLayer(d_model, c(attn), c(feed_forward),
+                                                             sublayer_num=3, dropout=dropout))
+
+        # 生成器
+        self.generator = Generator(d_model, vocab.n_vocabs)
+
+    def encoder(self, src, src_mask):
+        # 词向量嵌入
+        x1 = self.image_src_embed(src[0])
+        # 位置编码器嵌入
+        x1 = self.pos_embed(x1)
+        # 放到注意力去
+        x1 = self.encoder(x1, src_mask[0])
+
+        return x1
+
+    def r2l_decode(self, r2l_trg, memory, src_mask, r2l_trg_mask):
+        x = self.trg_embed(r2l_trg)
+        x = self.pos_embed(x)
+        return self.r2l_decoder(x, memory, src_mask, r2l_trg_mask)
+
+    def l2r_decode(self, trg, memory, src_mask, trg_mask, r2l_memory, r2l_trg_mask):
+        x = self.trg_embed(trg)
+        x = self.pos_embed(x)
+        return self.l2r_decoder(x, memory, src_mask, trg_mask, r2l_memory, r2l_trg_mask)
+
+    def forward(self, src, r2l_trg, l2r_trg, mask):
+        src_mask, r2l_pad_mask, r2l_trg_mask, trg_mask = mask
+        encoding_outputs = self.encoder(src, src_mask)
+
+        # 右到左解码
+        r2l_outputs = self.r2l_decode(r2l_trg, encoding_outputs, src_mask, r2l_trg_mask)
+
+        # 左到右解码
+        l2r_outputs = self.l2r_decode(l2r_trg, encoding_outputs, src_mask, trg_mask, r2l_outputs, r2l_pad_mask)
+
+        # 生成左到右和右到左的预测
+        r2l_pred = self.generator(r2l_outputs)
+        l2r_pred = self.generator(l2r_outputs)
+
+        return r2l_pred, l2r_pred
